@@ -4,28 +4,46 @@ import { hardhat } from "viem/chains";
 import fs from "fs";
 import path from "path";
 
-// Helper to read artifacts
+const RPC_URL = "http://127.0.0.1:8545";
+
 function getArtifact(contractName: string) {
     const artifactPath = path.join(process.cwd(), "artifacts", "contracts", `${contractName}.sol`, `${contractName}.json`);
     return JSON.parse(fs.readFileSync(artifactPath, "utf8"));
 }
 
-const RPC_URL = "http://127.0.0.1:8545";
+/**
+ * Advance blockchain time by specified seconds (Hardhat specific)
+ */
+async function advanceTime(seconds: number) {
+    await fetch(RPC_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "evm_increaseTime", params: [seconds], id: 1 })
+    });
+    await fetch(RPC_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "evm_mine", params: [], id: 2 })
+    });
+}
+
+/**
+ * Get current blockchain timestamp
+ */
+async function getBlockTimestamp(publicClient: any): Promise<bigint> {
+    const block = await publicClient.getBlock();
+    return block.timestamp;
+}
 
 async function main() {
-    console.log("--- Starting Escrow Interaction Script (Standalone) ---");
+    console.log("=== Dispute-Minimized Escrow Interaction Script ===\n");
 
-    // 1. Setup Clients
-    // Hardhat Node Accounts (Default #0, #1, #2)
-    const account0 = privateKeyToAccount("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"); // Buyer
-    const account1 = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"); // Seller
-    const account2 = privateKeyToAccount("0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"); // Arbiter
+    // Setup accounts
+    const account0 = privateKeyToAccount("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    const account1 = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+    const account2 = privateKeyToAccount("0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
 
-    const publicClient = createPublicClient({
-        chain: hardhat,
-        transport: http(RPC_URL)
-    });
-
+    const publicClient = createPublicClient({ chain: hardhat, transport: http(RPC_URL) });
     const buyer = createWalletClient({ account: account0, chain: hardhat, transport: http(RPC_URL) });
     const seller = createWalletClient({ account: account1, chain: hardhat, transport: http(RPC_URL) });
     const arbiter = createWalletClient({ account: account2, chain: hardhat, transport: http(RPC_URL) });
@@ -34,155 +52,191 @@ async function main() {
     console.log(`Seller: ${seller.account.address}`);
     console.log(`Arbiter: ${arbiter.account.address}`);
 
-    // 2. Deploy Factory
+    // Deploy Factory
     console.log("\n--- Deploying Factory ---");
     const factoryArtifact = getArtifact("EscrowFactory");
-
-    const hash = await buyer.deployContract({
-        abi: factoryArtifact.abi,
-        bytecode: factoryArtifact.bytecode,
-    });
+    const hash = await buyer.deployContract({ abi: factoryArtifact.abi, bytecode: factoryArtifact.bytecode });
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
-
     if (!receipt.contractAddress) throw new Error("Factory deployment failed");
     const factoryAddress = getAddress(receipt.contractAddress);
     console.log(`EscrowFactory deployed at: ${factoryAddress}`);
 
-    // 3. Run Scenarios
-    await runScenario1(factoryAddress, buyer, seller, arbiter, publicClient);
-    await runScenario2(factoryAddress, buyer, seller, arbiter, publicClient);
+    // Run Scenarios
+    await runHappyPath(factoryAddress, buyer, seller, arbiter, publicClient);
+    await runAutoReleaseScenario(factoryAddress, buyer, seller, arbiter, publicClient);
+    await runAutoRefundScenario(factoryAddress, buyer, seller, arbiter, publicClient);
+    await runDisputeScenario(factoryAddress, buyer, seller, arbiter, publicClient);
 
-    console.log("\n--- All Scenarios Finished Successfully ---");
+    console.log("\n=== All Scenarios Complete ===");
 }
 
-async function runScenario1(factoryAddress: any, buyer: any, seller: any, arbiter: any, publicClient: any) {
-    console.log("\n--- Scenario 1: Happy Path (Deposit -> Release) ---");
-    const amount1 = parseEther("1.0");
+async function createEscrowViaFactory(
+    factoryAddress: any, buyer: any, seller: any, arbiter: any, publicClient: any,
+    amount: bigint, deliveryDeadline: bigint, reviewPeriod: bigint
+) {
     const factoryArtifact = getArtifact("EscrowFactory");
-
-    // Call createEscrow
     const { request } = await publicClient.simulateContract({
         address: factoryAddress,
         abi: factoryArtifact.abi,
         functionName: "createEscrow",
-        args: [seller.account.address, arbiter.account.address],
+        args: [seller.account.address, arbiter.account.address, deliveryDeadline, reviewPeriod],
         account: buyer.account,
-        value: amount1
+        value: amount
     });
-    const hash1 = await buyer.writeContract(request);
-    const receipt1 = await publicClient.waitForTransactionReceipt({ hash: hash1 });
+    const hash = await buyer.writeContract(request);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
-    // Find Escrow Created address from logs
-    // EscrowCreated event from Factory has 3 indexed args (Escrow, Buyer, Seller) -> 4 topics including signature
-    let escrowAddress;
-    for (const log of receipt1.logs) {
+    for (const log of receipt.logs) {
         if (log.address.toLowerCase() === factoryAddress.toLowerCase() && log.topics.length >= 4) {
-            escrowAddress = getAddress("0x" + log.topics[1]?.slice(26));
-            console.log(`Escrow 1 created at: ${escrowAddress}`);
-            break;
+            return getAddress("0x" + log.topics[1]?.slice(26));
         }
     }
+    throw new Error("Escrow address not found in logs");
+}
 
-    if (!escrowAddress) {
-        // Fallback: check other logs if filtering failed logic
-        console.log("Logs found:", receipt1.logs);
-        throw new Error("Escrow 1 address not found");
-    }
+async function runHappyPath(factoryAddress: any, buyer: any, seller: any, arbiter: any, publicClient: any) {
+    console.log("\n--- Scenario 1: Happy Path (Fund → Deliver → Confirm) ---");
+    const amount = parseEther("1.0");
+    const now = await getBlockTimestamp(publicClient);
+    const deliveryDeadline = now + 3600n; // 1 hour
+    const reviewPeriod = 600n; // 10 minutes
+
+    const escrowAddress = await createEscrowViaFactory(
+        factoryAddress, buyer, seller, arbiter, publicClient, amount, deliveryDeadline, reviewPeriod
+    );
+    console.log(`Escrow created at: ${escrowAddress}`);
 
     const escrowArtifact = getArtifact("Escrow");
 
-    // Check State
-    let state = await publicClient.readContract({
-        address: escrowAddress,
-        abi: escrowArtifact.abi,
-        functionName: "state"
-    });
-    console.log(`State: ${state} (Expected 1)`);
+    // Check state
+    let state = await publicClient.readContract({ address: escrowAddress, abi: escrowArtifact.abi, functionName: "state" });
+    console.log(`State: ${state} (Expected 1: FUNDED)`);
 
-    // Buyer confirms delivery
+    // Seller marks delivery
+    console.log("Seller marking delivery...");
+    const { request: markReq } = await publicClient.simulateContract({
+        address: escrowAddress, abi: escrowArtifact.abi, functionName: "markDelivered", account: seller.account
+    });
+    await seller.writeContract(markReq);
+
+    state = await publicClient.readContract({ address: escrowAddress, abi: escrowArtifact.abi, functionName: "state" });
+    console.log(`State: ${state} (Expected 2: DELIVERED)`);
+
+    // Buyer confirms
     console.log("Buyer confirming delivery...");
-    const { request: req2 } = await publicClient.simulateContract({
-        address: escrowAddress,
-        abi: escrowArtifact.abi,
-        functionName: "confirmDelivery",
-        account: buyer.account
+    const { request: confirmReq } = await publicClient.simulateContract({
+        address: escrowAddress, abi: escrowArtifact.abi, functionName: "confirmDelivery", account: buyer.account
     });
-    await buyer.writeContract(req2);
+    await buyer.writeContract(confirmReq);
 
-    // Check State
-    state = await publicClient.readContract({
-        address: escrowAddress,
-        abi: escrowArtifact.abi,
-        functionName: "state"
-    });
-    console.log(`State: ${state} (Expected 2)`);
+    state = await publicClient.readContract({ address: escrowAddress, abi: escrowArtifact.abi, functionName: "state" });
+    console.log(`State: ${state} (Expected 3: COMPLETE)`);
 }
 
-async function runScenario2(factoryAddress: any, buyer: any, seller: any, arbiter: any, publicClient: any) {
-    console.log("\n--- Scenario 2: Dispute Path ---");
-    const amount2 = parseEther("0.5");
-    const factoryArtifact = getArtifact("EscrowFactory");
+async function runAutoReleaseScenario(factoryAddress: any, buyer: any, seller: any, arbiter: any, publicClient: any) {
+    console.log("\n--- Scenario 2: Auto-Release (Silent Buyer) ---");
+    const amount = parseEther("0.5");
+    const now = await getBlockTimestamp(publicClient);
+    const deliveryDeadline = now + 3600n;
+    const reviewPeriod = 2n; // 2 seconds for testing
 
-    const { request } = await publicClient.simulateContract({
-        address: factoryAddress,
-        abi: factoryArtifact.abi,
-        functionName: "createEscrow",
-        args: [seller.account.address, arbiter.account.address],
-        account: buyer.account,
-        value: amount2
-    });
-    const hash2 = await buyer.writeContract(request);
-    const receipt2 = await publicClient.waitForTransactionReceipt({ hash: hash2 });
-
-    let escrowAddress;
-    for (const log of receipt2.logs) {
-        if (log.address.toLowerCase() === factoryAddress.toLowerCase() && log.topics.length >= 4) {
-            escrowAddress = getAddress("0x" + log.topics[1]?.slice(26));
-            console.log(`Escrow 2 created at: ${escrowAddress}`);
-            break;
-        }
-    }
-    if (!escrowAddress) throw new Error("Escrow 2 address not found");
+    const escrowAddress = await createEscrowViaFactory(
+        factoryAddress, buyer, seller, arbiter, publicClient, amount, deliveryDeadline, reviewPeriod
+    );
+    console.log(`Escrow created at: ${escrowAddress}`);
 
     const escrowArtifact = getArtifact("Escrow");
 
-    // Dispute
-    console.log("Buyer raising dispute...");
-    const { request: reqD } = await publicClient.simulateContract({
-        address: escrowAddress,
-        abi: escrowArtifact.abi,
-        functionName: "dispute",
-        account: buyer.account
+    // Seller marks delivery
+    const { request: markReq } = await publicClient.simulateContract({
+        address: escrowAddress, abi: escrowArtifact.abi, functionName: "markDelivered", account: seller.account
     });
-    await buyer.writeContract(reqD);
+    await seller.writeContract(markReq);
+    console.log("Seller marked delivery. Advancing time past review period...");
 
-    // Check State
-    let state = await publicClient.readContract({
-        address: escrowAddress,
-        abi: escrowArtifact.abi,
-        functionName: "state"
-    });
-    console.log(`State: ${state} (Expected 4: DISPUTED)`);
+    // Advance blockchain time past review period
+    await advanceTime(5);
 
-    // Arbiter Resolves
-    console.log("Arbiter resolving...");
-    const { request: reqR } = await publicClient.simulateContract({
-        address: escrowAddress,
-        abi: escrowArtifact.abi,
-        functionName: "resolveDispute",
-        args: [buyer.account.address],
-        account: arbiter.account
+    // Anyone can claim by timeout
+    console.log("Claiming by timeout...");
+    const { request: claimReq } = await publicClient.simulateContract({
+        address: escrowAddress, abi: escrowArtifact.abi, functionName: "claimByTimeout", account: seller.account
     });
-    await arbiter.writeContract(reqR);
+    await seller.writeContract(claimReq);
 
-    state = await publicClient.readContract({
-        address: escrowAddress,
-        abi: escrowArtifact.abi,
-        functionName: "state"
-    });
-    console.log(`State: ${state} (Expected 3: REFUNDED)`);
+    const state = await publicClient.readContract({ address: escrowAddress, abi: escrowArtifact.abi, functionName: "state" });
+    console.log(`State: ${state} (Expected 3: COMPLETE - Auto-released to seller)`);
 }
 
+async function runAutoRefundScenario(factoryAddress: any, buyer: any, seller: any, arbiter: any, publicClient: any) {
+    console.log("\n--- Scenario 3: Auto-Refund (Silent Seller) ---");
+    const amount = parseEther("0.3");
+    const now = await getBlockTimestamp(publicClient);
+    const deliveryDeadline = now + 5n; // 5 seconds for testing
+    const reviewPeriod = 600n;
+
+    const escrowAddress = await createEscrowViaFactory(
+        factoryAddress, buyer, seller, arbiter, publicClient, amount, deliveryDeadline, reviewPeriod
+    );
+    console.log(`Escrow created at: ${escrowAddress}`);
+
+    const escrowArtifact = getArtifact("Escrow");
+
+    console.log("Advancing time past delivery deadline...");
+    await advanceTime(5);
+
+    // Buyer claims refund
+    console.log("Buyer claiming refund by timeout...");
+    const { request: claimReq } = await publicClient.simulateContract({
+        address: escrowAddress, abi: escrowArtifact.abi, functionName: "claimRefundByTimeout", account: buyer.account
+    });
+    await buyer.writeContract(claimReq);
+
+    const state = await publicClient.readContract({ address: escrowAddress, abi: escrowArtifact.abi, functionName: "state" });
+    console.log(`State: ${state} (Expected 4: REFUNDED - Auto-refunded to buyer)`);
+}
+
+async function runDisputeScenario(factoryAddress: any, buyer: any, seller: any, arbiter: any, publicClient: any) {
+    console.log("\n--- Scenario 4: Dispute Path ---");
+    const amount = parseEther("0.2");
+    const now = await getBlockTimestamp(publicClient);
+    const deliveryDeadline = now + 3600n;
+    const reviewPeriod = 600n;
+
+    const escrowAddress = await createEscrowViaFactory(
+        factoryAddress, buyer, seller, arbiter, publicClient, amount, deliveryDeadline, reviewPeriod
+    );
+    console.log(`Escrow created at: ${escrowAddress}`);
+
+    const escrowArtifact = getArtifact("Escrow");
+
+    // Seller marks delivery
+    const { request: markReq } = await publicClient.simulateContract({
+        address: escrowAddress, abi: escrowArtifact.abi, functionName: "markDelivered", account: seller.account
+    });
+    await seller.writeContract(markReq);
+
+    // Buyer disputes
+    console.log("Buyer raising dispute...");
+    const { request: disputeReq } = await publicClient.simulateContract({
+        address: escrowAddress, abi: escrowArtifact.abi, functionName: "dispute", account: buyer.account
+    });
+    await buyer.writeContract(disputeReq);
+
+    let state = await publicClient.readContract({ address: escrowAddress, abi: escrowArtifact.abi, functionName: "state" });
+    console.log(`State: ${state} (Expected 5: DISPUTED)`);
+
+    // Arbiter resolves in favor of buyer
+    console.log("Arbiter resolving dispute (refund to buyer)...");
+    const { request: resolveReq } = await publicClient.simulateContract({
+        address: escrowAddress, abi: escrowArtifact.abi, functionName: "resolveDispute",
+        args: [buyer.account.address], account: arbiter.account
+    });
+    await arbiter.writeContract(resolveReq);
+
+    state = await publicClient.readContract({ address: escrowAddress, abi: escrowArtifact.abi, functionName: "state" });
+    console.log(`State: ${state} (Expected 4: REFUNDED)`);
+}
 
 main()
     .then(() => process.exit(0))

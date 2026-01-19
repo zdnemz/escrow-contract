@@ -33,12 +33,12 @@ npm install
 npx hardhat compile
 ```
 
-### Test
+### Interact
 
-Run the unit tests:
+Run the interact script:
 
 ```bash
-npx hardhat test
+npx hardhat run scripts/interact.ts --network localhost
 ```
 
 > **Note**: Ensure your environment is set up for ESM. You might need to adjust `package.json` dependencies if you encounter `ERR_PACKAGE_PATH_NOT_EXPORTED` (downgrade Chai or fix imports).
@@ -48,14 +48,24 @@ npx hardhat test
 Deploy to a network (e.g. Sepolia):
 
 ```bash
-npx hardhat run scripts/deploy.ts --network sepolia
+npx hardhat ignition deploy ./ignition/modules/Escrow.ts --network localhost
 ```
 
 ## Architecture
 
-1. **Initialization**: Buyer (or Factory) deploys contract with `value` (ETH).
-2. **Locked**: Funds are held in `AWAITING_DELIVERY`.
-3. **Release**: Buyer calls `confirmDelivery()` -> Seller gets paid.
-4. **Refund**: Seller calls `refund()` -> Buyer gets paid.
-5. **Dispute**: Buyer or Seller calls `dispute()` -> Funds locked for Arbiter.
-6. **Resolution**: Arbiter calls `resolveDispute(winner)`.
+### State Machine
+```
+AWAITING_PAYMENT → FUNDED → DELIVERED → COMPLETE | REFUNDED
+                                       ↘ DISPUTED → COMPLETE | REFUNDED
+```
+
+### Lifecycle
+1. **Initialization**: Buyer deploys via Factory with `deliveryDeadline` and `reviewPeriod`.
+2. **Funded**: Funds locked in `FUNDED` state.
+3. **Delivery**: Seller calls `markDelivered()` before deadline.
+4. **Review**: Buyer has `reviewPeriod` to approve, dispute, or timeout.
+5. **Outcomes**:
+   - `confirmDelivery()` → Seller paid
+   - `claimByTimeout()` → Seller paid (buyer silent)
+   - `dispute()` → Arbiter decides
+   - `claimRefundByTimeout()` → Buyer refunded (seller silent)

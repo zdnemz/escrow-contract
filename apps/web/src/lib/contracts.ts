@@ -51,7 +51,7 @@ export const FACTORY_ABI = [
   { inputs: [{ name: "_seller", type: "address" }, { name: "_arbiter", type: "address" }, { name: "_deliveryDeadline", type: "uint256" }, { name: "_reviewPeriod", type: "uint256" }], name: "createEscrow", outputs: [{ name: "", type: "address" }], stateMutability: "payable", type: "function" },
 ] as const;
 
-export const FACTORY_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+export const FACTORY_ADDRESS = process.env.NEXT_PUBLIC_FACTORY_ADDRESS as `0x${string}`;
 
 // State enum matching Solidity
 export enum EscrowState {

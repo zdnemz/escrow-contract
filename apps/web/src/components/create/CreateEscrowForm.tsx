@@ -5,8 +5,10 @@ import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { parseEther, isAddress } from "viem";
 import { motion, AnimatePresence } from "framer-motion";
 import { FACTORY_ABI, FACTORY_ADDRESS } from "@/lib/contracts";
+import { useBlockTimestamp } from "@/hooks/useBlockTimestamp";
 
 export function CreateEscrowForm() {
+  const blockTime = useBlockTimestamp();
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     seller: "",
@@ -27,7 +29,7 @@ export function CreateEscrowForm() {
 
   const validateStep2 = () => {
     const deadline = new Date(formData.deliveryDeadline).getTime();
-    return deadline > Date.now();
+    return deadline > Number(blockTime) * 1000;
   };
 
   const handleCreate = () => {

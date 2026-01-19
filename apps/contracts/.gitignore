@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Hardhat build artifacts & cache
+artifacts/
+cache/
+coverage/
+coverage.json
+
+# Hardhat Ignition (Hardhat 3)
+ignition/deployments/
+ignition/instances/
+
+# Typechain (jika digunakan)
+typechain/
+typechain-types/

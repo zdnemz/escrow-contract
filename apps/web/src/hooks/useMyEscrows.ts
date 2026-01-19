@@ -27,12 +27,16 @@ export function useMyEscrows() {
 
             setIsLoading(true);
             try {
+                // Get current block for bounded range (public RPCs limit to ~1000 blocks)
+                const currentBlock = await publicClient.getBlockNumber();
+                const fromBlock = currentBlock > BigInt(1000) ? currentBlock - BigInt(1000) : BigInt(0);
+
                 // Fetch where user is buyer
                 const buyerLogs = await publicClient.getLogs({
                     address: FACTORY_ADDRESS,
                     event: parseAbiItem(EVENT_SIGNATURE),
                     args: { buyer: address },
-                    fromBlock: "earliest"
+                    fromBlock
                 });
 
                 // Fetch where user is seller
@@ -40,33 +44,43 @@ export function useMyEscrows() {
                     address: FACTORY_ADDRESS,
                     event: parseAbiItem(EVENT_SIGNATURE),
                     args: { seller: address },
-                    fromBlock: "earliest"
+                    fromBlock
                 });
 
                 const newEscrows: DashboardEscrow[] = [];
 
                 for (const log of buyerLogs) {
-                    // args is typed loosely by viem by default when using parseAbiItem, but we know the structure
                     const args = (log as any).args;
+                    let ts = BigInt(0);
+                    if (log.blockNumber) {
+                        const block = await publicClient.getBlock({ blockNumber: log.blockNumber });
+                        ts = block.timestamp;
+                    }
+
                     newEscrows.push({
                         address: args.escrowAddress,
                         role: "buyer",
                         amount: args.amount,
                         deliveryDeadline: args.deliveryDeadline,
-                        timestamp: BigInt(0), // Placeholder
+                        timestamp: ts,
                     });
                 }
 
                 for (const log of sellerLogs) {
                     const args = (log as any).args;
-                    // Deduplicate if user is both buyer and seller (unlikely but possible in testing)
                     if (!newEscrows.find(e => e.address === args.escrowAddress)) {
+                        let ts = BigInt(0);
+                        if (log.blockNumber) {
+                            const block = await publicClient.getBlock({ blockNumber: log.blockNumber });
+                            ts = block.timestamp;
+                        }
+
                         newEscrows.push({
                             address: args.escrowAddress,
                             role: "seller",
                             amount: args.amount,
                             deliveryDeadline: args.deliveryDeadline,
-                            timestamp: BigInt(0),
+                            timestamp: ts,
                         });
                     }
                 }

@@ -35,11 +35,15 @@ export function EventTimeline({ address }: { address: `0x${string}` }) {
             if (!publicClient) return;
 
             try {
+                // Get current block for bounded range
+                const currentBlock = await publicClient.getBlockNumber();
+                const fromBlock = currentBlock > BigInt(1000) ? currentBlock - BigInt(1000) : BigInt(0);
+
                 const promises = EVENTS.map(sig =>
                     publicClient.getLogs({
                         address,
                         event: parseAbiItem(sig) as any,
-                        fromBlock: 'earliest'
+                        fromBlock
                     })
                 );
 

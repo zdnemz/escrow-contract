@@ -33,6 +33,7 @@ export default function EscrowDetailPage() {
     const isBuyer = userAddress?.toLowerCase() === buyer?.toLowerCase();
     const isSeller = userAddress?.toLowerCase() === seller?.toLowerCase();
     const isArbiter = userAddress?.toLowerCase() === arbiter?.toLowerCase();
+    const hasArbiter = arbiter && arbiter !== "0x0000000000000000000000000000000000000000";
 
     // Refetch on tx success
     if (isSuccess) {
@@ -44,6 +45,15 @@ export default function EscrowDetailPage() {
             address: contractAddress,
             abi: ESCROW_ABI,
             functionName,
+        });
+    };
+
+    const handleResolveDispute = (winner: `0x${string}`) => {
+        writeContract({
+            address: contractAddress,
+            abi: ESCROW_ABI,
+            functionName: "resolveDispute",
+            args: [winner],
         });
     };
 
@@ -144,8 +154,8 @@ export default function EscrowDetailPage() {
                             </button>
                         )}
 
-                        {/* Buyer: Dispute */}
-                        {isBuyer && escrowState === EscrowState.DELIVERED && (
+                        {/* Buyer: Dispute - only if arbiter is set */}
+                        {isBuyer && escrowState === EscrowState.DELIVERED && hasArbiter && (
                             <button
                                 onClick={() => handleAction("dispute")}
                                 disabled={isPending || isTxLoading}
@@ -153,6 +163,13 @@ export default function EscrowDetailPage() {
                             >
                                 {isPending || isTxLoading ? "Processing..." : "Raise Dispute"}
                             </button>
+                        )}
+
+                        {/* No arbiter warning */}
+                        {isBuyer && escrowState === EscrowState.DELIVERED && !hasArbiter && (
+                            <div className="px-6 py-4 bg-slate-800/50 border border-slate-700 rounded-xl text-sm text-slate-500">
+                                No arbiter assigned — disputes are not available for this escrow
+                            </div>
                         )}
 
                         {/* Auto-release */}
@@ -175,6 +192,45 @@ export default function EscrowDetailPage() {
                             >
                                 Claim Refund (Seller Missed Deadline)
                             </button>
+                        )}
+
+                        {/* Arbiter: Resolve Dispute */}
+                        {isArbiter && escrowState === EscrowState.DISPUTED && (
+                            <div className="border border-slate-700 bg-slate-900/50 rounded-xl p-6 space-y-4">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <span className="text-xs px-2 py-1 bg-rose-600/20 border border-rose-600/50 rounded text-rose-400 font-medium">DISPUTED</span>
+                                    <h3 className="text-lg font-semibold text-slate-200">Resolve Dispute</h3>
+                                </div>
+                                <p className="text-sm text-slate-400">
+                                    As the arbiter, decide who receives the escrowed funds:
+                                </p>
+                                <div className="space-y-2 text-xs font-mono">
+                                    <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg">
+                                        <span className="text-slate-500">Buyer</span>
+                                        <span className="text-slate-300">{buyer?.slice(0, 10)}...{buyer?.slice(-8)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg">
+                                        <span className="text-slate-500">Seller</span>
+                                        <span className="text-slate-300">{seller?.slice(0, 10)}...{seller?.slice(-8)}</span>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4 pt-2">
+                                    <button
+                                        onClick={() => handleResolveDispute(buyer!)}
+                                        disabled={isPending || isTxLoading}
+                                        className="px-6 py-4 bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded-xl font-medium transition-colors disabled:opacity-50"
+                                    >
+                                        Award to Buyer
+                                    </button>
+                                    <button
+                                        onClick={() => handleResolveDispute(seller!)}
+                                        disabled={isPending || isTxLoading}
+                                        className="px-6 py-4 bg-amber-600 hover:bg-amber-500 rounded-xl font-medium transition-colors disabled:opacity-50 text-white"
+                                    >
+                                        Award to Seller
+                                    </button>
+                                </div>
+                            </div>
                         )}
                     </div>
 

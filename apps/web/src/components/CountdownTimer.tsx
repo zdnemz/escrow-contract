@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useBlockTimestamp } from "@/hooks/useBlockTimestamp";
 
 interface CountdownTimerProps {
   deadline: bigint;
@@ -10,26 +11,38 @@ interface CountdownTimerProps {
 }
 
 export function CountdownTimer({ deadline, label, onExpire }: CountdownTimerProps) {
+  const blockTime = useBlockTimestamp();
   const [remaining, setRemaining] = useState<number>(0);
   const [isExpired, setIsExpired] = useState(false);
 
   useEffect(() => {
-    const update = () => {
-      const now = Math.floor(Date.now() / 1000);
-      const diff = Number(deadline) - now;
-      if (diff <= 0) {
-        setRemaining(0);
-        setIsExpired(true);
-        onExpire?.();
-      } else {
-        setRemaining(diff);
-      }
-    };
+    // Use blockTime as the base anchor
+    const now = Number(blockTime);
+    const dead = Number(deadline);
+    const diff = dead - now;
 
-    update();
-    const interval = setInterval(update, 1000);
+    if (diff <= 0) {
+      setRemaining(0);
+      setIsExpired(true);
+      onExpire?.();
+    } else {
+      setRemaining(diff);
+      setIsExpired(false);
+    }
+  }, [blockTime, deadline, onExpire]);
+
+  // Interpolate for smooth seconds countdown locally
+  // We start with the block accuracy but tick down every second locally
+  // Re-sync happens automatically whenever blockTime updates
+  useEffect(() => {
+    if (isExpired) return;
+
+    const interval = setInterval(() => {
+      setRemaining(prev => Math.max(0, prev - 1));
+    }, 1000);
+
     return () => clearInterval(interval);
-  }, [deadline, onExpire]);
+  }, [blockTime, isExpired]); // Reset interval only on major syncs
 
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);

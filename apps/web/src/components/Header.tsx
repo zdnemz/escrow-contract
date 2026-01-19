@@ -11,6 +11,9 @@ export function Header() {
             <Link href="/" className="font-semibold text-lg hover:text-slate-200 transition-colors">Escrow</Link>
           </div>
           <nav className="flex gap-4">
+            <Link href="/disputes" className="text-sm font-medium text-slate-400 hover:text-amber-500 transition-colors">
+              Disputes
+            </Link>
             <Link href="/create" className="text-sm font-medium text-slate-400 hover:text-amber-500 transition-colors">
               Create Escrow
             </Link>

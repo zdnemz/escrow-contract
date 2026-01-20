@@ -18,10 +18,28 @@ export function EscrowCard({ address }: EscrowCardProps) {
     functionName: "state",
   });
 
-  const { data: amount } = useReadContract({
+  const { data: escrowAmount } = useReadContract({
     address,
     abi: ESCROW_ABI,
-    functionName: "amount",
+    functionName: "escrowAmount",
+  });
+
+  const { data: gasPoolBalance } = useReadContract({
+    address,
+    abi: ESCROW_ABI,
+    functionName: "gasPoolBalance",
+  });
+
+  const { data: arbiterFee } = useReadContract({
+    address,
+    abi: ESCROW_ABI,
+    functionName: "arbiterFee",
+  });
+
+  const { data: arbiterFeePaid } = useReadContract({
+    address,
+    abi: ESCROW_ABI,
+    functionName: "arbiterFeePaid",
   });
 
   const { data: buyer } = useReadContract({
@@ -52,7 +70,7 @@ export function EscrowCard({ address }: EscrowCardProps) {
               {address.slice(0, 10)}...{address.slice(-8)}
             </p>
             <p className="text-2xl font-semibold">
-              {amount ? formatEther(amount) : "0"} <span className="text-slate-500 text-base">ETH</span>
+              {escrowAmount ? formatEther(escrowAmount) : "0"} <span className="text-slate-500 text-base">ETH</span>
             </p>
           </div>
           <span className={`text-xs px-2 py-1 rounded-full bg-slate-800 ${STATE_COLORS[escrowState]}`}>
@@ -70,6 +88,26 @@ export function EscrowCard({ address }: EscrowCardProps) {
           <div>
             <span className="text-slate-500">Seller</span>
             <p className="font-mono text-slate-400 truncate">{seller}</p>
+          </div>
+        </div>
+
+        {/* Gas Abstraction Info */}
+        <div className="mt-3 pt-3 border-t border-slate-800/50 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-3">
+            <span className="text-slate-600">Gas Pool:</span>
+            <span className="font-mono text-slate-400">
+              {gasPoolBalance ? formatEther(gasPoolBalance) : "0"} ETH
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-600">Fee:</span>
+            {arbiterFeePaid ? (
+              <span className="text-teal-500">✓ Paid</span>
+            ) : (
+              <span className="font-mono text-slate-400">
+                {arbiterFee ? formatEther(arbiterFee) : "0"} ETH
+              </span>
+            )}
           </div>
         </div>
       </motion.div>
